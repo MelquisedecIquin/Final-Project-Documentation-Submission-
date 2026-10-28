@@ -1,8 +1,6 @@
 """
 Philippine Weather Streaming Dashboard
-
 Pipeline:  WeatherAPI -> Kafka -> Spark Structured Streaming -> MongoDB -> Streamlit
-
 Tab 1 (Live):     consumes the Kafka topic directly and refreshes every N seconds.
 Tab 2 (History):  queries MongoDB (written by Spark), supports filters, aggregation
                   (raw / hourly / daily / weekly) and export to Excel, PDF and CSV.
