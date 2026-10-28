@@ -1,0 +1,61 @@
+services:
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: kafka
+    ports:
+      - "9092:9092"   # for producer.py / app.py running on your PC
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:19092,CONTROLLER://:9093,EXTERNAL://:9092
+      # PLAINTEXT = used by other containers (Spark), EXTERNAL = used from your PC
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  mongo:
+    image: mongo:7
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  # Spark Structured Streaming job: Kafka -> (clean + aggregate) -> MongoDB
+  spark:
+    image: apache/spark:3.5.3-python3
+    container_name: spark-streaming
+    user: root
+    depends_on:
+      - kafka
+      - mongo
+    restart: on-failure
+    environment:
+      KAFKA_BOOTSTRAP: kafka:19092
+      KAFKA_TOPIC: weather-data
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB: weather
+      CHECKPOINT_DIR: /checkpoints
+    volumes:
+      - ./spark_streaming.py:/app/spark_streaming.py:ro
+      - spark_checkpoints:/checkpoints
+    command: >
+      /opt/spark/bin/spark-submit
+      --master local[2]
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.mongodb.spark:mongo-spark-connector_2.12:10.4.0
+      --conf spark.jars.ivy=/tmp/ivy
+      --conf spark.sql.shuffle.partitions=2
+      /app/spark_streaming.py
+
+volumes:
+  kafka_data:
+  mongo_data:
+  spark_checkpoints:

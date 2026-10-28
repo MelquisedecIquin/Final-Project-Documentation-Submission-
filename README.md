@@ -1,83 +1,67 @@
-# 🚀 Streaming Data Dashboard: Project Guide
+# 🌦️ Philippine Weather Streaming Dashboard
 
-This project requires building a big data streaming dashboard using **Kafka** and **Streamlit**, featuring separate real-time and historical data views.
+A big data pipeline that streams live weather readings from **WeatherAPI** through **Kafka** and **Spark Structured Streaming** into **MongoDB**, and shows them in a **Streamlit** dashboard with a live view and a full history view.
 
-## 🎯 Architecture & Components
+```
+WeatherAPI ──► producer.py ──► Kafka ──┬──► Streamlit "Live" tab (consumes Kafka directly, refreshes every 15 s)
+                                       │
+                                       └──► Spark Structured Streaming ──► MongoDB ──► Streamlit "History" tab
+                                            (raw + 1-minute aggregates)
+```
 
-A **dual-pipeline** architecture separates live streaming from long-term storage and analysis.
+| Component | File | What it does |
+| :-- | :-- | :-- |
+| Producer | `producer.py` | Calls WeatherAPI for 5 cities every 30 s and publishes one message per metric (temperature, humidity, pressure, wind) |
+| Kafka | `docker-compose.yml` | Message broker (topic `weather-data`) |
+| Spark | `spark_streaming.py` | Reads Kafka, writes raw readings to `weather.readings` and 1-minute windowed avg/min/max/count to `weather.aggregates_1min` |
+| MongoDB | `docker-compose.yml` | Long-term storage |
+| Dashboard | `app.py` | Live tab, History tab (filters, aggregation, all data), export to Excel / PDF / CSV |
 
-| Pipeline | Flow | Output |
-| :--- | :--- | :--- |
-| **Real-time** | Kafka $\rightarrow$ Streamlit (Live Consumer) | `📈 Real-time Streaming View` |
-| **Historical** | Kafka $\rightarrow$ **HDFS OR MongoDB** $\rightarrow$ Streamlit (Query) | `📊 Historical Data View` |
+## Message schema
+`timestamp` (ISO 8601 UTC), `value` (number), `metric_type`, `sensor_id` (city), plus `location`, `unit`, `observed_at`.
 
-### Mandatory Components
-* Kafka Producer/Consumer.
-* **HDFS or MongoDB** integration.
-* Two-page Streamlit dashboard with charts.
-* Robust error handling.
+## Setup (Windows)
 
----
+**Prerequisites:** Python 3.10+, [Docker Desktop](https://www.docker.com/products/docker-desktop/), a free [WeatherAPI](https://www.weatherapi.com/) key.
 
-## 💻 Technical Implementation Tasks
+```powershell
+python -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 
-### 1. Data Producer (`producer.py`)
-Create a Kafka Producer that fetches real data from an **existing Application Programming Interface (API)** (e.g., a public weather API, stock market API, etc.).
+copy .env.example .env      # then open .env and paste your WEATHERAPI_KEY
+```
 
-**Required Data Schema Fields:**
-* `timestamp` (ISO format)
-* `value` (Numeric)
-* `metric_type` (String)
-* `sensor_id` (String)
+## Run (4 steps, in this order)
 
-### 2. Dashboard (`app.py`)
-Implement the Streamlit logic:
-* `consume_kafka_data()`: Real-time processing.
-* `query_historical_data()`: Data retrieval from storage.
-* Create interactive widgets (filters, time-range selector) for the Historical View.
+```powershell
+# 1. Start Kafka, MongoDB and the Spark job (first run downloads images + Spark packages, ~2-5 min)
+docker compose up -d
 
-### 3. Storage Integration
-Implement data writing and querying for **ONE** of the following: **HDFS** or **MongoDB**.
+# 2. Start the producer (new terminal, venv activated)
+python producer.py
 
----
+# 3. Start the dashboard (another terminal, venv activated)
+streamlit run app.py
+```
 
-## 🏃‍♂️ Setup & Execution
+Open http://localhost:8501. The Live tab fills within about 30 seconds. The History tab fills as soon as Spark has written its first batch.
 
-### Prerequisites
-Python 3.8+, Apache Kafka, HDFS **OR** MongoDB.
+Useful commands:
 
-### Setup
-1. **Setup environment**
-    - Download miniconda
-    - Create your python environment
-    ```bash
-    conda create -n bigdata python=3.10.13
-    ```
-2.  **Clone Repo & Install:**
-    ```bash
-    git clone [REPO_URL]
-    conda activate bigdata
-    pip install -r requirements.txt
-    ```
-3.  **Configure:** Set up Kafka and your chosen Storage System.
-4.  **Optional Environment File (`.env`):** Use for connection details.
+```powershell
+docker compose logs -f spark      # watch Spark write batches to MongoDB
+docker compose down               # stop everything (data is kept in Docker volumes)
+docker compose down -v            # stop and DELETE all stored data
+python producer.py --cities "Manila" "Cebu City" --interval 60
+```
 
-### Execution
-1.  **Start Kafka Broker** (and Controller).
-2.  **Start Producer:**
-    ```bash
-    python producer.py
-    ```
-3.  **Launch Dashboard:**
-    ```bash
-    streamlit run app.py
-    ```
+## Dashboard features
+- **Live tab:** per-city KPI cards with change since last reading, multi-city line chart, data-freshness indicator, auto-refresh (5-60 s, default 15 s).
+- **History tab:** time range (1h / 24h / 7d / 30d / All), metric and city filters, aggregation (raw / hourly / daily / weekly), summary statistics, Spark 1-minute aggregates, table of all collected data.
+- **Export:** Excel (Data, Summary, Filters sheets), PDF report (summary table + charts), CSV.
 
----
-
-## 📦 Deliverables
-Submit the following files:
-* `app.py`
-* `producer.py`
-* `requirements.txt`
-* `README.md`
+## Notes
+- Free WeatherAPI plan: about 1 million calls/month. 5 cities every 30 s is roughly 430,000 calls/month; raise `--interval` if you run it for long periods.
+- `.env` holds your API key and is git-ignored. Never commit it.
